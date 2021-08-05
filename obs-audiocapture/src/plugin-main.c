@@ -17,29 +17,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
-#include <math.h>
-#include <util/bmem.h>
-#include <util/threading.h>
-#include <util/platform.h>
-#include <obs.h>
-
-#include <Windows.h>
 
 #include "plugin-macros.generated.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-extern struct obs_source_info my_source;
-
-extern const char* audiocapture_getname(void* data);
-extern void audiocapture_destroy(void* data);
-extern void* audiocapture_create(obs_data_t* settings, obs_source_t* source);
-
 bool obs_module_load(void)
 {
     blog(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
-    obs_register_source(&my_source);
     return true;
 }
 
@@ -47,13 +33,3 @@ void obs_module_unload()
 {
     blog(LOG_INFO, "plugin unloaded");
 }
-
-struct obs_source_info test_audiocapture = {
-	.id = "obs_audiocapture",
-	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_AUDIO,
-	.get_name = audiocapture_getname,
-	.create = audiocapture_create,
-	.destroy = audiocapture_destroy,
-};
-
