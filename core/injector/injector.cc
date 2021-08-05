@@ -10,11 +10,10 @@
 #include <psapi.h>
 
 #define DR_WAV_IMPLEMENTATION
+#include "../inject/inject.h"
+#include "CLI11.hpp"
 #include "dr_wav.h"
 #include "loguru.hpp"
-#include "CLI11.hpp"
-
-#include "../inject/inject.h"
 
 int ActivateSeDebugPrivilege(void) {
   HANDLE hToken;
@@ -54,7 +53,9 @@ int main(int argc, char** argv) {
   std::string record_wav_path;
   std::string target_process_path;
   app.add_flag("--x86", use_32bit_dll, "use 32-bit dll")->default_val(false);
-  app.add_option("-p,--process", target_process_path, "target process path (partial match)")->required();
+  app.add_option("-p,--process", target_process_path,
+                 "target process path (partial match)")
+      ->required();
   app.add_option("-s,--save", record_wav_path, "save to .wav file");
 
   try {
@@ -82,7 +83,7 @@ int main(int argc, char** argv) {
   }
   std::string fullpath = std::filesystem::absolute(path).string();
 
-  { 
+  {
     int ret = ActivateSeDebugPrivilege();
     if (ret != 0) {
       DLOG_F(ERROR, "failed ActivateSeDebugPrivilege().");
@@ -94,14 +95,15 @@ int main(int argc, char** argv) {
   while (!injected) {
     DWORD needed = 0;
     BOOL ret;
-    ret = ::EnumProcesses(processes.data(), processes.size() * sizeof(DWORD), &needed);
+    ret = ::EnumProcesses(processes.data(), processes.size() * sizeof(DWORD),
+                          &needed);
     if (ret == FALSE) {
       DLOG_F(ERROR, "failed EnumProcesses().");
       return 1;
     }
 
     int process_count = needed / sizeof(DWORD);
-    for (int i = 0;  i < process_count; ++i) {
+    for (int i = 0; i < process_count; ++i) {
       int pid = processes[i];
       if (pid == 0) {
         continue;
@@ -174,14 +176,16 @@ int main(int argc, char** argv) {
   }
 
   // Connect to pipe
-  std::string pipename = "\\\\.\\pipe\\audiocapture_" + std::to_string(injected_pid);
+  std::string pipename =
+      "\\\\.\\pipe\\audiocapture_" + std::to_string(injected_pid);
   HANDLE hPipe = INVALID_HANDLE_VALUE;
   while (hPipe == INVALID_HANDLE_VALUE) {
     DLOG_F(INFO, "Connecting to named pipe(%s) ...", pipename.c_str());
     hPipe = ::CreateFileA(pipename.c_str(), GENERIC_READ, 0, NULL,
                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hPipe == INVALID_HANDLE_VALUE) {
-      DLOG_F(WARNING, "error: Can't connect to the named pipe. sleeping 3 sec ...");
+      DLOG_F(WARNING,
+             "error: Can't connect to the named pipe. sleeping 3 sec ...");
       ::Sleep(3000);
       continue;
     }
@@ -211,7 +215,8 @@ int main(int argc, char** argv) {
     DWORD read_bytes = 0;
     DWORD avail_bytes = 0;
     BOOL ret;
-    ret = ::PeekNamedPipe(hPipe, buf.data(), pipesize, &read_bytes, &avail_bytes, NULL);
+    ret = ::PeekNamedPipe(hPipe, buf.data(), pipesize, &read_bytes,
+                          &avail_bytes, NULL);
     if (!ret) {
       DLOG_F(WARNING, "failed PeekNamedPipe().");
       break;
@@ -220,7 +225,7 @@ int main(int argc, char** argv) {
     if (read_bytes < (2 + sizeof(Header))) {
       continue;
     }
-    
+
     Header* h = (Header*)(buf.data() + 2);
     if ((int)read_bytes < h->total_size) {
       continue;
@@ -263,4 +268,3 @@ int main(int argc, char** argv) {
 
   return 0;
 }
-

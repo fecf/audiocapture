@@ -3,25 +3,29 @@
 #include <cassert>
 #include <string>
 
-#include <wrl.h>
-using namespace Microsoft::WRL;
+#define NOMINMAX
 #include <windows.h>
-#include <mmdeviceapi.h>
-#include <audioclient.h>
 
+// DirectSound
 #include <dsound.h>
 #pragma comment(lib, "dsound.lib")
 
+// WASAPI
+#include <audioclient.h>
+#include <mmdeviceapi.h>
+
+// WRL
+#include <wrl.h>
+using namespace Microsoft::WRL;
+
 #include "detours/detours.h"
-
-#include "loguru.hpp"
-
 #include "inject.h"
+#include "loguru.hpp"
 
 constexpr size_t kPipeSize = 1024 * 1024;
 
 class Inject {
-public:
+ public:
   static Inject& GetInstance() {
     static Inject instance;
     return instance;
@@ -36,23 +40,21 @@ public:
   WAVEFORMATEX* wasapiFormat = NULL;
   uint8_t* wasapiBuffer = NULL;
 
-public:
+ public:
   void Initialize() {
     DWORD pid = ::GetProcessIdOfThread(::GetCurrentThread());
     std::string pipename = "\\\\.\\pipe\\audiocapture_" + std::to_string(pid);
-    pipe_ = ::CreateNamedPipeA(
-        pipename.c_str(), PIPE_ACCESS_DUPLEX,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, kPipeSize,
-        1024 * 1024, NMPWAIT_USE_DEFAULT_WAIT, NULL);
+    pipe_ = ::CreateNamedPipeA(pipename.c_str(), PIPE_ACCESS_DUPLEX,
+                               PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                               1, kPipeSize, 1024 * 1024,
+                               NMPWAIT_USE_DEFAULT_WAIT, NULL);
 
     if (pipe_ == INVALID_HANDLE_VALUE) {
       DLOG_F(ERROR, "failed CreateNamedPipe().");
     }
   }
 
-  void Finalize() { 
-    ::CloseHandle(pipe_);
-  }
+  void Finalize() { ::CloseHandle(pipe_); }
 
   void writeCaptureData(uint8_t* data, size_t size, int channels, int samples,
                         int bitspersample, int samplespersec) {
@@ -81,7 +83,8 @@ public:
     // Write to the pipe
     BOOL ret;
     DWORD num_bytes_written = 0;
-    ret = ::WriteFile(pipe_, buf.data(), header.total_size, &num_bytes_written, NULL);
+    ret = ::WriteFile(pipe_, buf.data(), header.total_size, &num_bytes_written,
+                      NULL);
     if (ret == FALSE) {
       DWORD err = ::GetLastError();
       DLOG_F(ERROR, "failed WriteFile(). GetLastError() = %u.", err);
@@ -94,22 +97,27 @@ public:
       DWORD err = ::GetLastError();
       DLOG_F(ERROR, "failed PeekNamedPipe(). GetLastError() = %u.", err);
     }
-    DLOG_F(INFO, "writeCaptureData: %u of %u bytes written. pipe has %u bytes.", num_bytes_written, header.total_size, avail);
+    DLOG_F(INFO, "writeCaptureData: %u of %u bytes written. pipe has %u bytes.",
+           num_bytes_written, header.total_size, avail);
 #endif
   }
 
-private:
+ private:
   HANDLE pipe_;
 };
 
-HRESULT (__stdcall *RealGetDefaultAudioEndPoint)(IMMDeviceEnumerator* self, EDataFlow df, ERole r, IMMDevice* d) = NULL;
-HRESULT __stdcall HookGetDefaultAudioEndPoint(IMMDeviceEnumerator* self, EDataFlow df, ERole r, IMMDevice* d) {
+HRESULT(__stdcall* RealGetDefaultAudioEndPoint)
+(IMMDeviceEnumerator* self, EDataFlow df, ERole r, IMMDevice* d) = NULL;
+HRESULT __stdcall HookGetDefaultAudioEndPoint(IMMDeviceEnumerator* self,
+                                              EDataFlow df, ERole r,
+                                              IMMDevice* d) {
   DLOG_F(INFO, "HookGetDefaultAudioEndPoint");
   HRESULT ret = RealGetDefaultAudioEndPoint(self, df, r, d);
   return ret;
 }
 
-HRESULT (__stdcall *RealGetCurrentPadding)(IAudioClient* self, UINT32* padding) = NULL;
+HRESULT(__stdcall* RealGetCurrentPadding)
+(IAudioClient* self, UINT32* padding) = NULL;
 HRESULT __stdcall HookGetCurrentPadding(IAudioClient* self, UINT32* padding) {
   DLOG_F(INFO, "HookGetCurrentPadding");
   HRESULT ret = RealGetCurrentPadding(self, padding);
@@ -120,8 +128,10 @@ HRESULT __stdcall HookGetCurrentPadding(IAudioClient* self, UINT32* padding) {
   return ret;
 }
 
-HRESULT (__stdcall *RealGetBuffer)(IAudioRenderClient* self, UINT32 frames, BYTE** data) = NULL;
-HRESULT __stdcall HookGetBuffer(IAudioRenderClient* self, UINT32 frames, BYTE** data) {
+HRESULT(__stdcall* RealGetBuffer)
+(IAudioRenderClient* self, UINT32 frames, BYTE** data) = NULL;
+HRESULT __stdcall HookGetBuffer(IAudioRenderClient* self, UINT32 frames,
+                                BYTE** data) {
   DLOG_F(INFO, "HookGetBuffer");
   HRESULT ret = RealGetBuffer(self, frames, data);
 
@@ -130,8 +140,10 @@ HRESULT __stdcall HookGetBuffer(IAudioRenderClient* self, UINT32 frames, BYTE** 
   return ret;
 }
 
-HRESULT (__stdcall *RealReleaseBuffer)(IAudioRenderClient* self, UINT32 framesWritten, DWORD flags) = NULL;
-HRESULT __stdcall HookReleaseBuffer(IAudioRenderClient* self, UINT32 framesWritten, DWORD flags) {
+HRESULT(__stdcall* RealReleaseBuffer)
+(IAudioRenderClient* self, UINT32 framesWritten, DWORD flags) = NULL;
+HRESULT __stdcall HookReleaseBuffer(IAudioRenderClient* self,
+                                    UINT32 framesWritten, DWORD flags) {
   Inject& instance = Inject::GetInstance();
 
   instance.wasapiAudioClient->GetMixFormat(&instance.wasapiFormat);
@@ -142,10 +154,12 @@ HRESULT __stdcall HookReleaseBuffer(IAudioRenderClient* self, UINT32 framesWritt
   int size = framesWritten * instance.wasapiFormat->nBlockAlign;
   int samples = framesWritten;
   if (instance.wasapiFormat->nBlockAlign !=
-      instance.wasapiFormat->nChannels * (instance.wasapiFormat->wBitsPerSample / 8)) {
+      instance.wasapiFormat->nChannels *
+          (instance.wasapiFormat->wBitsPerSample / 8)) {
     assert(false && "not aligned.");
   }
-  instance.writeCaptureData((uint8_t*)instance.wasapiBuffer, size, channels, samples, bitspersample, samplespersec);
+  instance.writeCaptureData((uint8_t*)instance.wasapiBuffer, size, channels,
+                            samples, bitspersample, samplespersec);
 
   HRESULT ret = RealReleaseBuffer(self, framesWritten, flags);
   return ret;
@@ -188,8 +202,8 @@ HRESULT __stdcall HookDirectSoundUnlock(IDirectSoundBuffer* self,
 
   int samples = pdwAudioBytes1 / wfex.nBlockAlign;
   instance.writeCaptureData((uint8_t*)ppvAudioPtr1, pdwAudioBytes1,
-                            wfex.nChannels, samples,
-                            wfex.wBitsPerSample, wfex.nSamplesPerSec);
+                            wfex.nChannels, samples, wfex.wBitsPerSample,
+                            wfex.nSamplesPerSec);
 
   HRESULT ret = RealDirectSoundUnlock(self, ppvAudioPtr1, pdwAudioBytes1,
                                       ppvAudioPtr2, pdwAudioBytes2);
@@ -205,42 +219,51 @@ void* getVTableFunction(void* instance, int offset) {
 void hookWASAPI() {
   // Get vtable of IAudioClient, IAudioRenderClient
 
-	HRESULT hr;
-	hr = ::CoInitializeEx(NULL, COINIT_MULTITHREADED);
-	assert(SUCCEEDED(hr));
+  HRESULT hr;
+  hr = ::CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  assert(SUCCEEDED(hr));
 
-	ComPtr<IMMDeviceEnumerator> device_enumerator;
-	hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), &device_enumerator);
-	assert(SUCCEEDED(hr));
+  ComPtr<IMMDeviceEnumerator> device_enumerator;
+  hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
+                          __uuidof(IMMDeviceEnumerator), &device_enumerator);
+  assert(SUCCEEDED(hr));
 
-	ComPtr<IMMDevice> audio_device;
-	hr = device_enumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, ERole::eConsole, &audio_device);
-	assert(SUCCEEDED(hr));
+  ComPtr<IMMDevice> audio_device;
+  hr = device_enumerator->GetDefaultAudioEndpoint(
+      EDataFlow::eRender, ERole::eConsole, &audio_device);
+  assert(SUCCEEDED(hr));
 
-	ComPtr<IAudioClient> audio_client;
-	hr = audio_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, &audio_client);
-	assert(SUCCEEDED(hr));
+  ComPtr<IAudioClient> audio_client;
+  hr = audio_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL,
+                              &audio_client);
+  assert(SUCCEEDED(hr));
 
   WAVEFORMATEX* fmt;
   hr = audio_client->GetMixFormat(&fmt);
-	assert(SUCCEEDED(hr));
+  assert(SUCCEEDED(hr));
 
   hr = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                 AUDCLNT_STREAMFLAGS_NOPERSIST, 0, 0, fmt, NULL);
   assert(SUCCEEDED(hr));
 
-	ComPtr<IAudioRenderClient> audio_render_client;
-	hr = audio_client->GetService(__uuidof(IAudioRenderClient), &audio_render_client);
-	assert(SUCCEEDED(hr));
+  ComPtr<IAudioRenderClient> audio_render_client;
+  hr = audio_client->GetService(__uuidof(IAudioRenderClient),
+                                &audio_render_client);
+  assert(SUCCEEDED(hr));
 
-  RealGetDefaultAudioEndPoint = (decltype(RealGetDefaultAudioEndPoint))(getVTableFunction(device_enumerator.Get(), 4));
-  RealGetCurrentPadding = decltype(RealGetCurrentPadding)(getVTableFunction(audio_client.Get(), 6));
-  RealGetBuffer = decltype(RealGetBuffer)(getVTableFunction(audio_render_client.Get(), 3));
-  RealReleaseBuffer = decltype(RealReleaseBuffer)(getVTableFunction(audio_render_client.Get(), 4));
+  RealGetDefaultAudioEndPoint = (decltype(RealGetDefaultAudioEndPoint))(
+      getVTableFunction(device_enumerator.Get(), 4));
+  RealGetCurrentPadding =
+      decltype(RealGetCurrentPadding)(getVTableFunction(audio_client.Get(), 6));
+  RealGetBuffer =
+      decltype(RealGetBuffer)(getVTableFunction(audio_render_client.Get(), 3));
+  RealReleaseBuffer = decltype(RealReleaseBuffer)(
+      getVTableFunction(audio_render_client.Get(), 4));
 
   DetourTransactionBegin();
   DetourUpdateThread(::GetCurrentThread());
-  DetourAttach(&(PVOID&)RealGetDefaultAudioEndPoint, HookGetDefaultAudioEndPoint);
+  DetourAttach(&(PVOID&)RealGetDefaultAudioEndPoint,
+               HookGetDefaultAudioEndPoint);
   DetourAttach(&(PVOID&)RealGetCurrentPadding, HookGetCurrentPadding);
   DetourAttach(&(PVOID&)RealGetBuffer, HookGetBuffer);
   DetourAttach(&(PVOID&)RealReleaseBuffer, HookReleaseBuffer);
@@ -250,17 +273,18 @@ void hookWASAPI() {
 void unhookWASAPI() {
   DetourTransactionBegin();
   DetourUpdateThread(::GetCurrentThread());
-  DetourDetach(&(PVOID&)RealGetDefaultAudioEndPoint, HookGetDefaultAudioEndPoint);
+  DetourDetach(&(PVOID&)RealGetDefaultAudioEndPoint,
+               HookGetDefaultAudioEndPoint);
   DetourDetach(&(PVOID&)RealGetCurrentPadding, HookGetCurrentPadding);
   DetourDetach(&(PVOID&)RealGetBuffer, HookGetBuffer);
   DetourDetach(&(PVOID&)RealReleaseBuffer, HookReleaseBuffer);
   DetourTransactionCommit();
 }
 
-void hookDSound() { 
+void hookDSound() {
   HRESULT hr;
   ComPtr<IDirectSound8> ds;
-  hr = ::DirectSoundCreate8(NULL, &ds, NULL); 
+  hr = ::DirectSoundCreate8(NULL, &ds, NULL);
   assert(SUCCEEDED(hr));
 
   DSBUFFERDESC dsbd{};
@@ -275,14 +299,16 @@ void hookDSound() {
   (dsbd.lpwfxFormat)->nAvgBytesPerSec = 44100 * (16 / 8) * 2;
   (dsbd.lpwfxFormat)->nBlockAlign = (16 / 8) * 2;
   (dsbd.lpwfxFormat)->wBitsPerSample = 16;
-  (dsbd.lpwfxFormat)->cbSize = 0;  
+  (dsbd.lpwfxFormat)->cbSize = 0;
 
   ComPtr<IDirectSoundBuffer> buffer;
   hr = ds->CreateSoundBuffer(&dsbd, &buffer, NULL);
   assert(SUCCEEDED(hr));
 
-  RealDirectSoundLock = (decltype(RealDirectSoundLock))(getVTableFunction(buffer.Get(), 11));
-  RealDirectSoundUnlock = (decltype(RealDirectSoundUnlock))(getVTableFunction(buffer.Get(), 19));
+  RealDirectSoundLock =
+      (decltype(RealDirectSoundLock))(getVTableFunction(buffer.Get(), 11));
+  RealDirectSoundUnlock =
+      (decltype(RealDirectSoundUnlock))(getVTableFunction(buffer.Get(), 19));
 
   DetourTransactionBegin();
   DetourUpdateThread(::GetCurrentThread());
@@ -311,7 +337,8 @@ void uninstallHook() {
 
 DWORD WINAPI thread(LPVOID lpParam) {
 #ifdef _DEBUG
-  loguru::add_file("audiocapture.debug.log", loguru::FileMode::Append, loguru::Verbosity_MAX);
+  loguru::add_file("audiocapture.debug.log", loguru::FileMode::Append,
+                   loguru::Verbosity_MAX);
 #endif
 
   HRESULT hr;
@@ -337,18 +364,16 @@ DWORD WINAPI thread(LPVOID lpParam) {
   return 0;
 }
 
-BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
-{
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
+                      LPVOID lpReserved) {
   Inject& instance = Inject::GetInstance();
 
   switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
       ::DisableThreadLibraryCalls(hModule);
       instance.threadExit = false;
-      instance.thread = ::CreateThread(NULL, 0, thread, &instance.threadExit, 0, NULL);
+      instance.thread =
+          ::CreateThread(NULL, 0, thread, &instance.threadExit, 0, NULL);
       break;
     case DLL_THREAD_ATTACH:
       break;
